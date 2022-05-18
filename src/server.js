@@ -4,6 +4,7 @@ const fs = require('fs')
 const http = require('./http.js')
 
 const port = process.env.PORT || '8080';
+const settingsFolder = './settings';
 
 const defaultSettings = {
   collectionFile : process.env.COLLECTION_FILE || './collection.json',
@@ -129,14 +130,23 @@ app.get('/', (req, res) => {
 app.listen(port, async () => {
   logMessage(`Newman runner started & listening on ${port}`)
 
-  // Hard-code this for initial-case test. TODO: Refactor to enumerate files in a collections folder.
-  // Further TODO: Refactor to enumerate files in a collection_settings folder to override things like Run Interval on a per-collection basis.
-  // (Using object.assign() here as an object-clone so we can freely update values from defaultSettings.)
-  // Do this stuff here so we don't need to mess around with async/await.
-  collectionWorkers.push( await initCollection(Object.assign({}, defaultSettings)) );
+  // Multi-Collection Support takes precedence
+  if (fs.existsSync(settingsFolder)) {
+    let files = fs.readdirSync(settingsFolder)
+    for (let settingsFile of files) {
+      let settings = Object.assign({}, defaultSettings);
+      settings.collectionFile = `${settingsFolder}/${settingsFile}`;
+      collectionWorkers.push( await initCollection( settings ) );
+    }
+  }
+
+  // Else, Single-Collection behavior will be used.
+  if (collectionWorkers.length==0) {
+    collectionWorkers.push( await initCollection(Object.assign({}, defaultSettings)) );
+  }
 
   collectionWorkers.forEach(function(workerItem){
-    logMessage(`Collection  will be run every ${workerItem.settings.runInterval} seconds`)
+    logMessage(`Collection ${workerItem.settings.collectionFile} will be run every ${workerItem.settings.runInterval} seconds`)
     runCollection(workerItem);
     setInterval(function(){ runCollection(workerItem) }, parseInt(workerItem.settings.runInterval * 1000))
   })
@@ -194,7 +204,7 @@ async function initCollection(collectionSettings) {
 }
 
 function runCollection(workerItem) {
-  logMessage(`Starting run of ${workerItem.settings.collectionName}`)
+  logMessage(`Starting run of ${workerItem.settings.collectionFile}`)
 
   // Special logic to bring all env vars starting with POSTMAN_ into the run
   let postmanEnvVar = []

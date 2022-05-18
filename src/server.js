@@ -3,8 +3,8 @@ const express = require('express')
 const fs = require('fs')
 const http = require('./http.js')
 
-const port = process.env.PORT || '8080';
-const settingsFolder = './settings';
+const port = process.env.PORT || '8080'
+const settingsFolder = './settings'
 
 const defaultSettings = {
   collectionFile : process.env.COLLECTION_FILE || './collection.json',
@@ -25,7 +25,7 @@ const defaultSettings = {
   reqCount : 0,
 }
 
-let collectionWorkers = [];
+let collectionWorkers = []
 
 //
 // Entrypoint and server startup is here....
@@ -41,12 +41,12 @@ app.get('/metrics', (req, res) => {
     // --------------------------------------------------------------------------------
     // Add per-collection stats...
     collectionWorkers.forEach(function(workerItem){
-      let resultSummary = workerItem.settings.resultSummary;
-      let collectionName = workerItem.settings.collectionName;
+      let resultSummary = workerItem.settings.resultSummary
+      let collectionName = workerItem.settings.collectionName
 
-      let runCount = workerItem.settings.runCount;
-      let iterationCount = workerItem.settings.iterationCount;
-      let reqCount = workerItem.settings.reqCount;
+      let runCount = workerItem.settings.runCount
+      let iterationCount = workerItem.settings.iterationCount
+      let reqCount = workerItem.settings.reqCount
 
       metricString = addMetric(metricString, collectionName, 'lifetime_runs_total', runCount, 'counter')
       metricString = addMetric(metricString, collectionName, 'lifetime_iterations_total', iterationCount, 'counter')
@@ -118,7 +118,7 @@ app.get('/metrics', (req, res) => {
     res.send(metricString)
   } catch (err) {
     console.log(err)
-    res.status(500).send("No result data to show, maybe the collection has not run yet.")
+    res.status(500).send('No result data to show, maybe the collection has not run yet.')
   }
 })
 
@@ -134,20 +134,20 @@ app.listen(port, async () => {
   if (fs.existsSync(settingsFolder)) {
     let files = fs.readdirSync(settingsFolder)
     for (let settingsFile of files) {
-      let settings = Object.assign({}, defaultSettings);
-      settings.collectionFile = `${settingsFolder}/${settingsFile}`;
-      collectionWorkers.push( await initCollection( settings ) );
+      let settings = Object.assign({}, defaultSettings)
+      settings.collectionFile = `${settingsFolder}/${settingsFile}`
+      collectionWorkers.push(await initCollection(settings))
     }
   }
 
   // Else, Single-Collection behavior will be used.
   if (collectionWorkers.length==0) {
-    collectionWorkers.push( await initCollection(Object.assign({}, defaultSettings)) );
+    collectionWorkers.push(await initCollection(Object.assign({}, defaultSettings)))
   }
 
   collectionWorkers.forEach(function(workerItem){
     logMessage(`Collection ${workerItem.settings.collectionFile} will be run every ${workerItem.settings.runInterval} seconds`)
-    runCollection(workerItem);
+    runCollection(workerItem)
     setInterval(function(){ runCollection(workerItem) }, parseInt(workerItem.settings.runInterval * 1000))
   })
 })
@@ -200,7 +200,7 @@ async function initCollection(collectionSettings) {
     process.exit(1)
   }
 
-  return collectionWorker;
+  return collectionWorker
 }
 
 function runCollection(workerItem) {
@@ -227,19 +227,25 @@ function runCollection(workerItem) {
       envVar: postmanEnvVar,
     },
     function(err, summary) {
-      runComplete(workerItem, err, summary);
+      runComplete(workerItem, err, summary)
     }
   )
 }
 
 function runComplete(workerItem, err, summary) {
   if (!summary) {
-    logMessage(`ERROR! Failed to run collection, no summary was returned!`)
+    logMessage(`ERROR! Failed to run collection ${workerItem.settings.collectionFile}, no summary was returned!`)
     return
   }
 
   // This post run loop is for logging of what happened and some data clean up
   for (let e in summary.run.executions) {
+    if (summary.run.executions[e].response === undefined) {
+      logMessage(
+        ` - Failed request '${summary.run.executions[e].item.name}' with ${summary.run.executions[e].requestError} `
+      )
+      continue
+    }
     logMessage(
       ` - Completed request '${summary.run.executions[e].item.name}' in ${summary.run.executions[e].response.responseTime} ms`
     )
@@ -259,7 +265,10 @@ function runComplete(workerItem, err, summary) {
       }
     }
   }
-  fs.writeFileSync("${workerItem.settings.collectionName}_debug.tmp.json", JSON.stringify(summary, null, 2))
+  fs.writeFileSync(
+    `${summary.collection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_debug.tmp.json`,
+    JSON.stringify(summary, null, 2)
+  )
 
   const time = summary.run.timings.completed - summary.run.timings.started
   logMessage(`Run complete, and took ${time}ms`)

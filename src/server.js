@@ -4,23 +4,29 @@ const express = require('express')
 const fs = require('fs')
 const http = require('./http.js')
 
-let collectionFile = process.env.COLLECTION_FILE || './collection.json'
-const collectionUrl = process.env.COLLECTION_URL || ''
-const envFile = process.env.ENVIRONMENT_FILE || ''
-const envUrl = process.env.ENV_URL || ''
 const port = process.env.PORT || '8080'
-const runInterval = process.env.RUN_INTERVAL || '30'
-const runIterations = process.env.RUN_ITERATIONS || '1'
-const enableBail = process.env.ENABLE_BAIL || 'false'
-const requestMetrics = process.env.ENABLE_REQUEST_METRICS || 'true'
+const settingsFolder = './settings'
 
-let collectionName = ''
-let resultSummary = {}
+const defaultSettings = {
+  collectionFile : process.env.COLLECTION_FILE || './collection.json',
+  collectionUrl : process.env.COLLECTION_URL || '',
+  envFile : process.env.ENVIRONMENT_FILE || '',
+  envUrl : process.env.ENV_URL || '',
+  runInterval : process.env.RUN_INTERVAL || '30',
+  runIterations : process.env.RUN_ITERATIONS || '1',
+  enableBail : process.env.ENABLE_BAIL || 'false',
+  requestMetrics : process.env.ENABLE_REQUEST_METRICS || 'true',
 
-// Lifetime global counters
-let runCount = 0
-let iterationCount = 0
-let reqCount = 0
+  collectionName : '',
+  resultSummary : {},
+
+  // Lifetime global counters
+  runCount : 0,
+  iterationCount : 0,
+  reqCount : 0,
+}
+
+let collectionWorkers = []
 
 // Create a Registry to register the metrics
 const register = new client.Registry();
@@ -44,72 +50,87 @@ app.get('/metrics', async (req, res) => {
 
   let metricString = await register.metrics()
   try {
-    metricString = addMetric(metricString, 'lifetime_runs_total', runCount, 'counter')
-    metricString = addMetric(metricString, 'lifetime_iterations_total', iterationCount, 'counter')
-    metricString = addMetric(metricString, 'lifetime_requests_total', reqCount, 'counter')
-    metricString = addMetric(metricString, 'stats_iterations_total', resultSummary.run.stats.iterations.total)
-    metricString = addMetric(metricString, 'stats_iterations_failed', resultSummary.run.stats.iterations.failed)
-    metricString = addMetric(metricString, 'stats_requests_total', resultSummary.run.stats.requests.total)
-    metricString = addMetric(metricString, 'stats_requests_failed', resultSummary.run.stats.requests.failed)
-    metricString = addMetric(metricString, 'stats_tests_total', resultSummary.run.stats.tests.total)
-    metricString = addMetric(metricString, 'stats_tests_failed', resultSummary.run.stats.tests.failed)
-    metricString = addMetric(metricString, 'stats_test_scripts_total', resultSummary.run.stats.testScripts.total)
-    metricString = addMetric(metricString, 'stats_test_scripts_failed', resultSummary.run.stats.testScripts.failed)
-    metricString = addMetric(metricString, 'stats_assertions_total', resultSummary.run.stats.assertions.total)
-    metricString = addMetric(metricString, 'stats_assertions_failed', resultSummary.run.stats.assertions.failed)
-    metricString = addMetric(metricString, 'stats_transfered_bytes_total', resultSummary.run.transfers.responseTotal)
-    metricString = addMetric(metricString, 'stats_resp_avg', resultSummary.run.timings.responseAverage)
-    metricString = addMetric(metricString, 'stats_resp_min', resultSummary.run.timings.responseMin)
-    metricString = addMetric(metricString, 'stats_resp_max', resultSummary.run.timings.responseMax)
+    // --------------------------------------------------------------------------------
+    // Add per-collection stats...
+    collectionWorkers.forEach(function(workerItem){
+      let resultSummary = workerItem.settings.resultSummary
+      let collectionName = workerItem.settings.collectionName
 
-    if (requestMetrics == 'true') {
-      for (let execution of resultSummary.run.executions) {
-        if (!execution.response) {
-          continue
-        }
+      let runCount = workerItem.settings.runCount
+      let iterationCount = workerItem.settings.iterationCount
+      let reqCount = workerItem.settings.reqCount
 
-        const labels = [
-          {
-            // eslint-disable-next-line camelcase
-            request_name: execution.item.name,
-          },
-          {
-            iteration: execution.cursor.iteration,
-          },
-        ]
-        if (execution.response.code) {
-          metricString = addMetric(metricString, 'request_status_code', execution.response.code, 'gauge', labels)
-        }
-        if (execution.response.responseTime) {
-          metricString = addMetric(metricString, 'request_resp_time', execution.response.responseTime, 'gauge', labels)
-        }
-        if (execution.response.responseSize) {
-          metricString = addMetric(metricString, 'request_resp_size', execution.response.responseSize, 'gauge', labels)
-        }
-        if (execution.response.status) {
-          const statusOK = execution.response.status == 'OK' ? 1 : 0
-          metricString = addMetric(metricString, 'request_status_ok', statusOK, 'gauge', labels)
-        }
+      metricString = addMetric(metricString, collectionName, 'lifetime_runs_total', runCount, 'counter')
+      metricString = addMetric(metricString, collectionName, 'lifetime_iterations_total', iterationCount, 'counter')
+      metricString = addMetric(metricString, collectionName, 'lifetime_requests_total', reqCount, 'counter')
+  
+      metricString = addMetric(metricString, collectionName, 'stats_iterations_total', resultSummary.run.stats.iterations.total)
+      metricString = addMetric(metricString, collectionName, 'stats_iterations_failed', resultSummary.run.stats.iterations.failed)
+      metricString = addMetric(metricString, collectionName, 'stats_requests_total', resultSummary.run.stats.requests.total)
+      metricString = addMetric(metricString, collectionName, 'stats_requests_failed', resultSummary.run.stats.requests.failed)
+      metricString = addMetric(metricString, collectionName, 'stats_tests_total', resultSummary.run.stats.tests.total)
+      metricString = addMetric(metricString, collectionName, 'stats_tests_failed', resultSummary.run.stats.tests.failed)
+      metricString = addMetric(metricString, collectionName, 'stats_test_scripts_total', resultSummary.run.stats.testScripts.total)
+      metricString = addMetric(metricString, collectionName, 'stats_test_scripts_failed', resultSummary.run.stats.testScripts.failed)
+      metricString = addMetric(metricString, collectionName, 'stats_assertions_total', resultSummary.run.stats.assertions.total)
+      metricString = addMetric(metricString, collectionName, 'stats_assertions_failed', resultSummary.run.stats.assertions.failed)
+      metricString = addMetric(metricString, collectionName, 'stats_transfered_bytes_total', resultSummary.run.transfers.responseTotal)
+      metricString = addMetric(metricString, collectionName, 'stats_resp_avg', resultSummary.run.timings.responseAverage)
+      metricString = addMetric(metricString, collectionName, 'stats_resp_min', resultSummary.run.timings.responseMin)
+      metricString = addMetric(metricString, collectionName, 'stats_resp_max', resultSummary.run.timings.responseMax)
 
-        let failedAssertions = 0
-        let totalAssertions = 0
-        // Include per request assertion metrics
-        if (execution.assertions) {
-          for (let a in execution.assertions) {
-            totalAssertions++
-            if (execution.assertions[a].error) {
-              failedAssertions++
+      if (workerItem.settings.requestMetrics == 'true') {
+        for (let execution of resultSummary.run.executions) {
+          if (!execution.response) {
+            continue
+          }
+
+          const labels = [
+            {
+              // eslint-disable-next-line camelcase
+              request_name: execution.item.name,
+            },
+            {
+              iteration: execution.cursor.iteration,
+            },
+          ]
+          if (execution.response.code) {
+            metricString = addMetric(metricString, collectionName, 'request_status_code', execution.response.code, 'gauge', labels)
+          }
+          if (execution.response.responseTime) {
+            metricString = addMetric(metricString, collectionName, 'request_resp_time', execution.response.responseTime, 'gauge', labels)
+          }
+          if (execution.response.responseSize) {
+            metricString = addMetric(metricString, collectionName, 'request_resp_size', execution.response.responseSize, 'gauge', labels)
+          }
+          if (execution.response.status) {
+            const statusOK = execution.response.status == 'OK' ? 1 : 0
+            metricString = addMetric(metricString, collectionName, 'request_status_ok', statusOK, 'gauge', labels)
+          }
+
+          let failedAssertions = 0
+          let totalAssertions = 0
+          // Include per request assertion metrics
+          if (execution.assertions) {
+            for (let a in execution.assertions) {
+              totalAssertions++
+              if (execution.assertions[a].error) {
+                failedAssertions++
+              }
             }
           }
+          metricString = addMetric(metricString, collectionName, 'request_failed_assertions', failedAssertions, 'gauge', labels)
+          metricString = addMetric(metricString, collectionName, 'request_total_assertions', totalAssertions, 'gauge', labels)
         }
-        metricString = addMetric(metricString, 'request_failed_assertions', failedAssertions, 'gauge', labels)
-        metricString = addMetric(metricString, 'request_total_assertions', totalAssertions, 'gauge', labels)
       }
-    }
+    })
+    // --------------------------------------------------------------------------------
+    // ##### End of per-collection metrics
 
     res.send(metricString)
   } catch (err) {
-    res.status(500).send('No result data to show, maybe the collection has not run yet')
+    console.log(err)
+    res.status(500).send('No result data to show, maybe the collection has not run yet.')
   }
 })
 
@@ -119,15 +140,52 @@ app.get('/', (req, res) => {
 })
 
 app.listen(port, async () => {
+  logMessage(`Newman runner started & listening on ${port}`)
+
+  // Multi-Collection Support takes precedence
+  if (fs.existsSync(settingsFolder)) {
+    let files = fs.readdirSync(settingsFolder)
+    for (let settingsFile of files) {
+      let settings = Object.assign({}, defaultSettings)
+      settings.collectionFile = `${settingsFolder}/${settingsFile}`
+      collectionWorkers.push(await initCollection(settings))
+    }
+  }
+
+  // Else, Single-Collection behavior will be used.
+  if (collectionWorkers.length==0) {
+    collectionWorkers.push(await initCollection(Object.assign({}, defaultSettings)))
+  }
+
+  collectionWorkers.forEach(function(workerItem){
+    logMessage(`Collection ${workerItem.settings.collectionFile} will be run every ${workerItem.settings.runInterval} seconds`)
+    runCollection(workerItem)
+    setInterval(function(){ runCollection(workerItem) }, parseInt(workerItem.settings.runInterval * 1000))
+  })
+})
+
+// --------------------------------------------------------------------------------
+//
+// Monitoring and Prometheus functions
+//
+
+
+async function initCollection(collectionSettings) {
+  // clone the defaultSettings so we can override if/when needed.
+  let collectionWorker = { 
+    settings: collectionSettings
+  }
+
+
   // COLLECTION_URL when set takes priority over COLLECTION_FILE
-  if (collectionUrl) {
-    logMessage(`Collection URL will be fetched and used ${collectionUrl}`)
+  if (collectionWorker.settings.collectionUrl) {
+    logMessage(`Collection URL will be fetched and used ${collectionWorker.settings.collectionUrl}`)
     try {
-      const httpClient = new http(collectionUrl, false)
+      const httpClient = new http(collectionWorker.settings.collectionUrl, false)
       let resp = await httpClient.get('')
       fs.writeFileSync(`./downloaded-collection.tmp.json`, resp.data)
       // Note. Overwrite the COLLECTION_FILE setting if it was already set
-      collectionFile = './downloaded-collection.tmp.json'
+      collectionWorker.settings.collectionFile = './downloaded-collection.tmp.json'
     } catch (err) {
       logMessage(`FATAL! Failed to download collection from URL\n ${JSON.stringify(err, null, 2)}`)
       process.exit(1)
@@ -135,38 +193,30 @@ app.listen(port, async () => {
   }
 
   // ENV_URL when set takes priority over ENVIRONMENT_FILE
-  if (envUrl) {
-    logMessage(`Postman Environment file URL will be fetched and used ${envUrl}`)
+  if (collectionWorker.settings.envUrl) {
+    logMessage(`Postman Environment file URL will be fetched and used ${collectionWorker.settings.envUrl}`)
     try {
-      const httpClient = new http(envUrl, false)
+      const httpClient = new http(collectionWorker.settings.envUrl, false)
       let resp = await httpClient.get('')
       fs.writeFileSync(`./downloaded-env.tmp.json`, resp.data)
       // Note. Overwrite the ENVIRONMENT_FILE setting if it was already set
-      envFile = './downloaded-env.tmp.json'
+      collectionWorker.settings.envFile = './downloaded-env.tmp.json'
     } catch (err) {
       logMessage(`FATAL! Failed to download environment from URL\n ${JSON.stringify(err, null, 2)}`)
       process.exit(1)
     }
   }
 
-  if (!fs.existsSync(collectionFile)) {
-    logMessage(`FATAL! Collection file '${collectionFile}' not found`)
+  if (!fs.existsSync(collectionWorker.settings.collectionFile)) {
+    logMessage(`FATAL! Collection file '${collectionWorker.settings.collectionFile}' not found`)
     process.exit(1)
   }
 
-  logMessage(`Newman runner started & listening on ${port}`)
-  logMessage(`Collection will be run every ${runInterval} seconds`)
+  return collectionWorker
+}
 
-  runCollection()
-  setInterval(runCollection, parseInt(runInterval * 1000))
-})
-
-//
-// Monitoring and Prometheus functions
-//
-
-function runCollection() {
-  logMessage(`Starting run of ${collectionFile}`)
+function runCollection(workerItem) {
+  logMessage(`Starting run of ${workerItem.settings.collectionFile}`)
 
   // Special logic to bring all env vars starting with POSTMAN_ into the run
   let postmanEnvVar = []
@@ -182,24 +232,32 @@ function runCollection() {
 
   newman.run(
     {
-      collection: require(collectionFile),
-      iterationCount: parseInt(runIterations),
-      bail: enableBail == 'true',
-      environment: envFile,
+      collection: require(workerItem.settings.collectionFile),
+      iterationCount: parseInt(workerItem.settings.runIterations),
+      bail: workerItem.settings.enableBail == 'true',
+      environment: workerItem.settings.envFile,
       envVar: postmanEnvVar,
     },
-    runComplete
+    function(err, summary) {
+      runComplete(workerItem, err, summary)
+    }
   )
 }
 
-function runComplete(err, summary) {
+function runComplete(workerItem, err, summary) {
   if (!summary) {
-    logMessage(`ERROR! Failed to run collection, no summary was returned!`)
+    logMessage(`ERROR! Failed to run collection ${workerItem.settings.collectionFile}, no summary was returned!`)
     return
   }
 
   // This post run loop is for logging of what happened and some data clean up
   for (let e in summary.run.executions) {
+    if (summary.run.executions[e].response === undefined) {
+      logMessage(
+        ` - Failed request '${summary.run.executions[e].item.name}' with ${summary.run.executions[e].requestError} `
+      )
+      continue
+    }
     logMessage(
       ` - Completed request '${summary.run.executions[e].item.name}' in ${summary.run.executions[e].response.responseTime} ms`
     )
@@ -219,23 +277,26 @@ function runComplete(err, summary) {
       }
     }
   }
-  fs.writeFileSync('debug.tmp.json', JSON.stringify(summary, null, 2))
+  fs.writeFileSync(
+    `${summary.collection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_debug.tmp.json`,
+    JSON.stringify(summary, null, 2)
+  )
 
   const time = summary.run.timings.completed - summary.run.timings.started
   logMessage(`Run complete, and took ${time}ms`)
 
-  runCount++
-  iterationCount += summary.run.stats.iterations.total
-  reqCount += summary.run.stats.requests.total
+  workerItem.settings.runCount++
+  workerItem.settings.iterationCount += summary.run.stats.iterations.total
+  workerItem.settings.reqCount += summary.run.stats.requests.total
 
   if (err) {
     logMessage(`ERROR! Failed to run collection ${err}`)
   }
-  resultSummary = summary
-  collectionName = summary.collection.name
+  workerItem.settings.resultSummary = summary
+  workerItem.settings.collectionName = summary.collection.name
 }
 
-function addMetric(metrics, name, value, type = 'gauge', labels = []) {
+function addMetric(metrics, collectionName, name, value, type = 'gauge', labels = []) {
   metrics += `# TYPE postman_${name} ${type}\n`
 
   let labelsClone = [...labels]

@@ -1,3 +1,4 @@
+const client = require('prom-client')
 const newman = require('newman')
 const express = require('express')
 const fs = require('fs')
@@ -21,16 +22,27 @@ let runCount = 0
 let iterationCount = 0
 let reqCount = 0
 
+// Create a Registry to register the metrics
+const register = new client.Registry();
+client.collectDefaultMetrics({
+  app: 'postman_exporter',
+  prefix: 'postman_exporter_',
+  timeout: 10000,
+  gcDurationBuckets: [0.001, 0.01, 0.1, 1, 2, 5],
+  register
+});
+
+// --------------------------------------------------------------------------------
 //
 // Entrypoint and server startup is here....
 //
 
 const app = express()
 
-app.get('/metrics', (req, res) => {
+app.get('/metrics', async (req, res) => {
   res.setHeader('content-type', 'text/plain; charset=utf-8; version=0.0.4')
 
-  let metricString = ''
+  let metricString = await register.metrics()
   try {
     metricString = addMetric(metricString, 'lifetime_runs_total', runCount, 'counter')
     metricString = addMetric(metricString, 'lifetime_iterations_total', iterationCount, 'counter')

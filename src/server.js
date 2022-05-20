@@ -304,23 +304,25 @@ function runComplete(workerItem, err, summary) {
       }
     }
   }
+
   fs.writeFileSync(
     `${summary.collection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_debug.tmp.json`,
     JSON.stringify(summary, null, 2)
   )
 
-  const time = summary.run.timings.completed - summary.run.timings.started
-  logMessage(`Run complete, and took ${time}ms`)
-
   workerItem.settings.runCount++
   workerItem.settings.iterationCount += summary.run.stats.iterations.total
   workerItem.settings.reqCount += summary.run.stats.requests.total
 
+  workerItem.settings.collectionName = summary.collection.name
+  workerItem.settings.resultSummary = summary
+
+  const time = summary.run.timings.completed - summary.run.timings.started
+  logMessage(`Run ${workerItem.settings.collectionFile} complete, and took ${time}ms`)
+
   if (err) {
     logMessage(`ERROR! Failed to run collection ${err}`)
   }
-  workerItem.settings.resultSummary = summary
-  workerItem.settings.collectionName = summary.collection.name
 }
 
 function addMetric(metrics, collectionName, name, value, type = 'gauge', labels = []) {

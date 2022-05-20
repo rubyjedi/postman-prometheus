@@ -38,6 +38,17 @@ client.collectDefaultMetrics({
   register
 });
 
+// Create a custom histogram metric
+const httpRequestTimer = new client.Histogram({
+  name: 'postman_exporter_http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'code'],
+  buckets: [0.1, 0.3, 0.5, 0.7, 1, 3, 5, 7, 10] // 0.1 to 10 seconds
+});
+
+// Register the histogram
+register.registerMetric(httpRequestTimer);
+
 // --------------------------------------------------------------------------------
 //
 // Entrypoint and server startup is here....
@@ -46,6 +57,11 @@ client.collectDefaultMetrics({
 const app = express()
 
 app.get('/metrics', async (req, res) => {
+  // Start the HTTP request timer, saving a reference to the returned method
+  const end = httpRequestTimer.startTimer();
+  // Save reference to the path so we can record it when ending the timer
+  const route = req.route.path;
+
   res.setHeader('content-type', 'text/plain; charset=utf-8; version=0.0.4')
 
   let metricString = await register.metrics()
@@ -128,6 +144,9 @@ app.get('/metrics', async (req, res) => {
     // ##### End of per-collection metrics
 
     res.send(metricString)
+
+    // End timer and add labels
+    end({ route, code: res.statusCode, method: req.method });
   } catch (err) {
     console.log(err)
     res.status(500).send('No result data to show, maybe the collection has not run yet.')
@@ -135,8 +154,16 @@ app.get('/metrics', async (req, res) => {
 })
 
 app.get('/', (req, res) => {
+  // Start the HTTP request timer, saving a reference to the returned method
+  const end = httpRequestTimer.startTimer();
+  // Save reference to the path so we can record it when ending the timer
+  const route = req.route.path;
+
   res.setHeader('content-type', 'text/plain')
   res.status(404).send('Nothing here, try /metrics')
+
+  // End timer and add labels
+  end({ route, code: res.statusCode, method: req.method });
 })
 
 app.listen(port, async () => {
